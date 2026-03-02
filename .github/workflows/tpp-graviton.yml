@@ -5,7 +5,11 @@ on:
   push:
     branches:
       - 'main'
-  pull_request:
+  schedule:
+    # Runs every week to keep the AWS node working
+    - cron: '0 0 * * 5'
+  # Disabling pull request for now, problems with repo secrets
+  # pull_request:
 
 env:
   NPROCS_LIMIT_LINK: 8
@@ -14,10 +18,10 @@ env:
 jobs:
   ec2-start:
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'push') || (github.event_name == 'workflow_dispatch') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'arm')) ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'benchmark-full'))
+    # if: |
+    #   (github.event_name == 'push') || (github.event_name == 'workflow_dispatch') ||
+    #   (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'arm')) ||
+    #   (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'benchmark-full'))
     steps:
       # Step 2: Set up AWS CLI
       - name: Set up AWS CLI
@@ -33,11 +37,12 @@ jobs:
           aws ec2 start-instances --instance-ids i-06347807c1743f85d
 
   TPP-MLIR-ARM:
-    runs-on: [ self-hosted, graviton ]
-    if: |
-      (github.event_name == 'push') || (github.event_name == 'workflow_dispatch') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'arm')) ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'benchmark-full'))
+    runs-on: [ self-hosted, aws, graviton3, hpc ]
+    timeout-minutes: 60
+    # if: |
+    #   (github.event_name == 'push') || (github.event_name == 'workflow_dispatch') ||
+    #   (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'arm')) ||
+    #   (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'benchmark-full'))
     needs: ec2-start
     steps:
       - uses: actions/checkout@v4

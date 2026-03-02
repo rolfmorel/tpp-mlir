@@ -18,6 +18,7 @@
 #include "TPP/Transforms/Utils/TensorInit.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Types.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <random>
@@ -85,30 +86,14 @@ protected:
   virtual void fillData() override = 0;
 };
 
-// Constant init (all-ones, do not use!).
+// Constant init (all-ones).
 struct ConstantTensorInitFloat : TensorInitFloat {
   ConstantTensorInitFloat(DataType type) : TensorInitFloat(type) {}
 
   // Return a dense<1.0> repeated throughout the shape.
-  mlir::DenseElementsAttr get(mlir::ShapedType shape) override;
+  mlir::FailureOr<mlir::DenseElementsAttr> get(mlir::ShapedType shape) override;
 
-  void fillData() override;
-};
-
-// Simple init (basic example, not useful).
-struct SimpleTensorInitFloat : TensorInitFloat {
-  SimpleTensorInitFloat(DataType type) : TensorInitFloat(type) {}
-
-  // Return a dense<0.3, 0.6, 0.9> repeated throughout the shape.
-  void fillData() override;
-};
-
-// Continuous init (normalized affine range).
-struct ContinuousTensorInitFloat : TensorInitFloat {
-  ContinuousTensorInitFloat(DataType type) : TensorInitFloat(type) {}
-
-  // Return a dense<0.0 ... 1.0> throughout the shape.
-  void fillData() override;
+  void fillData() override { assert(false && "Should not be called"); }
 };
 
 // Random init (uniform).
@@ -145,6 +130,51 @@ struct NormalTensorInitFloat : TensorInitFloat {
   void fillData() override;
 
 private:
+  // Random generator.
+  std::default_random_engine generator;
+  // Random distribution.
+  std::normal_distribution<float> distribution;
+};
+
+// Identity init.
+struct IdentityTensorInitFloat : TensorInitFloat {
+  IdentityTensorInitFloat(DataType type)
+      : TensorInitFloat(type) {}
+
+  // Makes sure the shape is "square"
+  bool checkShape(mlir::ShapedType shape) override {
+    if (!TensorInit::checkShape(shape))
+      return false;
+    // Now the fields are set, compare all dims to be equal, 2D only for now
+    return dims.size() == 2 && dims[0] == dims[1];
+  }
+
+  // Should not be called.
+  float next() { assert(false && "Should not be called"); }
+
+  // Return a diagonal of <1.0>s throughout the shape.
+  void fillData() override;
+};
+
+// Random init (Quant).
+struct QuantScaleTensorInitFloat : TensorInitFloat {
+  QuantScaleTensorInitFloat(DataType type, int seed)
+      : TensorInitFloat(type), generator(seed), distribution(0.0, 0.2) {}
+
+  // Method to set scale buffer.
+  void setScaleBuffer(const std::vector<llvm::APFloat> &newBuffer) {
+    scaleBuffer = newBuffer;
+  }
+
+  // Should not be called.
+  float next() { assert(false && "Should not be called"); }
+
+  // Update internal buffer with rescale.
+  void fillData() override;
+
+private:
+  // Scale buffer corresponding to quantized arguments.
+  std::vector<llvm::APFloat> scaleBuffer;
   // Random generator.
   std::default_random_engine generator;
   // Random distribution.

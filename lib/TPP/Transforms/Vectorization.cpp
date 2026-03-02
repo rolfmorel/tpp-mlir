@@ -11,6 +11,7 @@
 #include "TPP/Dialect/Xsmm/XsmmUtils.h"
 #include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -37,8 +38,6 @@ struct LinalgGenericToVector : OpRewritePattern<linalg::GenericOp> {
 
   LogicalResult matchAndRewrite(linalg::GenericOp linalgOp,
                                 PatternRewriter &rewriter) const override {
-    if (!linalgOp.hasPureBufferSemantics())
-      return failure();
     if (xsmm::utils::getDataType(rewriter, linalgOp.getOperand(0).getType()) ==
             xsmm::DataTypeAttr::get(rewriter.getContext(),
                                     xsmm::DataType::BF16) &&
@@ -77,7 +76,7 @@ struct LinalgGenericToVector : OpRewritePattern<linalg::GenericOp> {
       AffineExpr expr = map1.getResult(map1Index);
       if (isa<AffineBinaryOpExpr>(expr)) {
 
-        auto expand = rewriter.create<memref::ExpandShapeOp>(
+        auto expand = memref::ExpandShapeOp::create(rewriter, 
             linalgOp.getLoc(), shape, linalgOp.getOperand(0), indices);
         linalgOp.setOperand(0, expand.getResult());
         map1 = map1.insertResult(
@@ -88,7 +87,14 @@ struct LinalgGenericToVector : OpRewritePattern<linalg::GenericOp> {
             {map0, map1, linalgOp.getIndexingMapsArray()[2]}));
       }
     }
-    return linalg::vectorize(rewriter, linalgOp);
+         
+    auto vectorizeResult = linalg::vectorize(rewriter, linalgOp);
+    if (failed(vectorizeResult))
+	    return failure();
+
+    rewriter.replaceOp(linalgOp, vectorizeResult->replacements);
+
+    return success();
   }
 };
 
@@ -98,7 +104,14 @@ struct LinalgToVector : OpRewritePattern<LinalgOp> {
 
   LogicalResult matchAndRewrite(LinalgOp linalgOp,
                                 PatternRewriter &rewriter) const override {
-    return linalg::vectorize(rewriter, linalgOp);
+
+    auto vectorizeResult = linalg::vectorize(rewriter, linalgOp);
+    if (failed(vectorizeResult))
+            return failure();
+
+    rewriter.replaceOp(linalgOp, vectorizeResult->replacements);
+
+    return success();
   }
 };
 
@@ -107,6 +120,7 @@ struct VectorizationPass
 
   void populateCombinePatterns(RewritePatternSet &patterns) {
     patterns.add<LinalgToVector<linalg::BatchReduceMatmulOp>,
+                 LinalgToVector<linalg::ContractOp>,
                  LinalgToVector<linalg::TransposeOp>,
                  LinalgToVector<linalg::FillOp>>(patterns.getContext());
     patterns.add<LinalgGenericToVector>(patterns.getContext());
@@ -117,6 +131,7 @@ struct VectorizationPass
     populateCombinePatterns(patterns);
     vector::populateVectorTransferPermutationMapLoweringPatterns(patterns);
     vector::populateVectorReductionToContractPatterns(patterns);
+    vector::populateFoldArithExtensionPatterns(patterns);
     (void)applyPatternsGreedily(getOperation(), std::move(patterns));
   }
 };

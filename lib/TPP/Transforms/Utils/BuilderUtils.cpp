@@ -30,7 +30,7 @@ arith::ConstantOp getConstant(OpBuilder &builder, Type type, ValueT value) {
     attr = builder.getFloatAttr(type, value);
   }
   assert(attr && "Unsupported ConstantOp type");
-  return builder.create<arith::ConstantOp>(unkLoc, type, attr);
+  return arith::ConstantOp::create(builder, unkLoc, type, attr);
 }
 } // anonymous namespace
 
@@ -56,6 +56,8 @@ func::FuncOp createFunction(OpBuilder &builder, ModuleOp module, StringRef name,
 
 Value getConstInt(OpBuilder &builder, int value, int width) {
   switch (width) {
+  case 8:
+    return getConstant(builder, builder.getI8Type(), value);
   case 32:
     return getConstant(builder, builder.getI32Type(), value);
   case 64:
@@ -79,7 +81,8 @@ Value createDenseTensor(OpBuilder &builder, TensorInitType initType,
   auto unkLoc = builder.getUnknownLoc();
   auto init = getTensorInit(initType, type.getElementType(), seed);
   auto floatInit = init->get(type);
-  return builder.create<arith::ConstantOp>(unkLoc, type, floatInit);
+  assert(!failed(floatInit) && "Invalid dense tensor initializer");
+  return arith::ConstantOp::create(builder, unkLoc, type, floatInit.value());
 }
 
 Value createDenseMemref(OpBuilder &builder, ModuleOp module,
@@ -103,17 +106,18 @@ Value createDenseMemref(OpBuilder &builder, ModuleOp module,
     auto alignment = builder.getIntegerAttr(builder.getI64Type(), 128);
     auto init = getTensorInit(initType, type.getElementType(), seed);
     auto floatInit = init->get(type);
+    assert(!failed(floatInit) && "Invalid dense tensor initializer");
 
     // Create the global object in the Module's region
-    auto global = builder.create<memref::GlobalOp>(
-        unkLoc, StringRef(name), privAttr, type, floatInit,
+    auto global = memref::GlobalOp::create(builder, 
+        unkLoc, StringRef(name), privAttr, type, floatInit.value(),
         /*constant=*/false, alignment);
     globalName = global.getName();
   }
   // Get the created global value and use it
   // as an input to the kernel
   auto nameAttr = builder.getStringAttr(globalName);
-  return builder.create<memref::GetGlobalOp>(unkLoc, type, nameAttr);
+  return memref::GetGlobalOp::create(builder, unkLoc, type, nameAttr);
 }
 
 TypedAttr getTypedAttr(OpBuilder &builder, Type type, double value) {

@@ -1,5 +1,5 @@
 // RUN: tpp-run %s \
-// RUN:  -e entry -entry-point-result=void -def-parallel --parallel-task-grid=2,8 --print-mlir=late 2>&1 | FileCheck %s
+// RUN:  -e entry -entry-point-result=void --sfc-order=false --def-parallel --parallel-task-grid=2,8 --print-mlir=late 2>&1 | FileCheck %s
 
 #map = affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d2, d3, d5)>
 #map1 = affine_map<(d0, d1, d2, d3, d4, d5) -> (d1, d2, d5, d4)>
@@ -29,7 +29,7 @@ module {
 // CHECK: %[[temp0:.*]] = call @xsmm_brgemm_dispatch(%[[c1_i64]], %[[c32_i64]], %[[c32_i64]], %[[c32_i64]], %[[c32_i64]], %[[c32_i64]], %[[c32_i64]], %[[c1024_i64]], %[[c1024_i64]], %[[c0_i64]])
 // CHECK:    omp.parallel {
 // CHECK:      omp.wsloop {
-// CHECK:        omp.loop_nest (%[[ARG3:.*]], %[[ARG4:.*]]) : index = (%[[c0]], %[[c0]]) to (%[[c8]], %[[c32]]) step (%[[c2]], %[[c8]]) {
+// CHECK:        omp.loop_nest (%[[ARG3:.*]], %[[ARG4:.*]]) : index = (%[[c0]], %[[c0]]) to (%[[c8]], %[[c32]]) step (%[[c2]], %[[c8]]) collapse(2) {
 // CHECK:          memref.alloca_scope  {
 // CHECK:            scf.for %[[ARG5:.*]] = %[[c0]] to %[[c2]] step %[[c1]] {
 // CHECK:	       %[[temp1:.*]] = arith.addi %[[ARG5]], %[[ARG3]] : index

@@ -11,6 +11,24 @@
 
 include "mlir/Pass/PassBase.td"
 
+def LoadTppDialects : Pass<"load-tpp-dialects", "ModuleOp"> {
+  let summary = "Pre-load all TPP-specific dialects";
+  let description = [{
+    Pre-load dialects that -transform-interpreter would try to load at runtime.
+
+    The issue is that -transform-interpreter runs inside the multi-threaded
+    passmanager. Hence when the interpreter dynamically tries to load dependent
+    dialects this triggers an assert as loading during multi-threaded execution
+    could lead to concurrency issues.
+  }];
+  let dependentDialects = ["xsmm::XsmmDialect",
+                           "check::CheckDialect",
+                           "perf::PerfDialect",
+                           "omp::OpenMPDialect",
+                           "amx::AMXDialect",
+                           "async::AsyncDialect"];
+}
+
 def ConvertLinalgToXsmm : Pass<"convert-linalg-to-xsmm", "func::FuncOp"> {
   let summary = "Convert linalg to xsmm";
   let description = [{
@@ -86,6 +104,22 @@ def VectorContractToFMA : Pass<
                            "tensor::TensorDialect",
                            "vector::VectorDialect",
                            "arith::ArithDialect"];
+  let options = [
+         Option<"targetFeature", "target-feature", "std::string", "",
+                "Target feature for a given architecture">,
+  ];
+}
+
+def VectorContractToAMX : Pass<
+    "vector-contract-to-amx"> {
+  let summary = "Perform vector amx lowering of vector contraction ops";
+  let dependentDialects = ["memref::MemRefDialect",
+                           "scf::SCFDialect",
+                           "tensor::TensorDialect",
+                           "vector::VectorDialect",
+                           "arith::ArithDialect",
+                           "amx::AMXDialect",
+                           "x86vector::X86VectorDialect"];
 }
 
 
@@ -103,6 +137,42 @@ def BrgemmLinalgTiling : Pass<"tile-brgemm-linalg"> {
 }
 
 
+def BF16DotProduct : Pass<"vector-contract-to-bf16dp"> {
+   let summary = "Perform avx512bf16 dot product lowering of vector contraction operation for bf16 type with vnni layout=2";
+   let description = [{
+     Perform avx512bf16 dot product lowering of vector contraction operation for bf16 type with vnni layout=2.
+   }];
+   let dependentDialects = [ "vector::VectorDialect", "scf::SCFDialect", "x86vector::X86VectorDialect" ];
+}
+
+def MicroKernels : Pass<"vector-contract-to-micro-kernels"> {
+   let summary = "Perform  lowering of vector contraction operation";
+   let description = [{Add commentMore actions
+     Perform  micro kernel lowering of vector contraction operation.
+   }];
+   let dependentDialects = [ "vector::VectorDialect", 
+			     "scf::SCFDialect", 
+			     "arith::ArithDialect",
+			     "x86vector::X86VectorDialect" ];
+  let options = [
+         Option<"targetFeature", "target-feature", "std::string", "",
+                "Target feature for a given architecture">,
+  ];
+}
+
+def MicroKernelsAMX : Pass<"vector-contract-to-micro-kernels-amx"> {
+   let summary = "Perform AMX target lowering of vector contraction operation";
+   let description = [{
+     Perform  flat layout AMX target micro kernel lowering of vector contraction operation.
+   }];
+   let dependentDialects = [ "vector::VectorDialect",
+                             "memref::MemRefDialect",
+                             "linalg::LinalgDialect",
+                             "scf::SCFDialect",
+                             "arith::ArithDialect",
+                             "amx::AMXDialect",
+                             "x86vector::X86VectorDialect" ];
+}
 
 def ConvertXsmmToFunc : Pass<"convert-xsmm-to-func", "ModuleOp"> {
   let summary = "Convert xsmm to func";
@@ -166,47 +236,17 @@ def PackMatmul : Pass<"pack-matmul", "func::FuncOp"> {
   ];
 }
 
-def PackConv2DNchwFchw : Pass<"pack-conv2DNchwFchw", "func::FuncOp"> {
-  let summary = "Convert Conv2DNchwFchw to block layout and back";
-  let description = [{
-    Block Conv2DNchwFchw as: [N][BK][P][Q][bk] += [N][BC][H][W][bc] * [BK][BC][R][S][bk][bc]
-                             output            += image             * filter
-    Pack the image's channel with a block factor BC.
-    Pack the filter's channels C and K with a block factor of BC and BK.
-    Pack the output's channel K with a block factor BK.
-  }];
-  let options = [
-    ListOption<"blockingFactors", "block-factors", "int64_t",
-               "Blocking factor for relayout">
-  ];
-}
-
-def PackConv2DNhwcHwcf : Pass<"pack-conv2DNhwcHwcf", "func::FuncOp"> {
-  let summary = "Pack and unpack Conv2DNhwcHwcf";
-  let description = [{
-    Pack Conv2DNhwcHwcf as [N][K'][P][Q][k] += [N][C'][H][W][c] * [K'][C'][R][S][c][k]
-                           output           += image            * filter
-    Pack the image and block the image's channel with a factor k.
-    Pack the filter and block the filter's channels with k and c.
-    Pack the output and block the output's channel with k.
-  }];
-  let options = [
-    ListOption<"blockingFactors", "block-factors", "int64_t",
-               "Blocking factor for pack and unpack operation">
-  ];
-}
-
 def TileConsumerAndFuseProducers : Pass<"tile-consumer-and-fuse-producers",
                                         "func::FuncOp"> {
   let summary = "Tile consumers and fuse producers";
   let description = [{
     The pass uses `TileConsumerAndFuseProducersUsingSCFForOp` to tile the
     consumer and fuse the consumer with the producers. The fusion anchor to matmul
-    or conv-like patterns allows two additional options to control how many
+    or matmul-like patterns allows two additional options to control how many
     producers fuse together with the latched operation and how many consumers.
     Precisely, `max-depth` controls how many producers should be considered, while
     `start-from-last-consumer` allows to move the anchor point to the last fusable
-    consumer of the conv or matmul-like pattern.
+    consumer of the matmul-like pattern.
   }];
   let options = [
     ListOption<"tileSizes", "tile-sizes", "int64_t", "Tile sizes">,
@@ -231,19 +271,6 @@ def LowerPacksAndUnpacksWithoutTranspose : Pass<"lower-packs-unpacks-without-tra
    "ModuleOp"> {
   let dependentDialects = ["linalg::LinalgDialect",
                            "tensor::TensorDialect"];
-}
-
-def RewriteConvToMatmulOrBrgemm : Pass<"rewrite-conv-to-matmul-or-brgemm",
-                                       "func::FuncOp"> {
-  let summary = "Rewrite Conv2DNhwcHwcfOp/Conv2DNchwFchwOp to Matmul or Brgemm.";
-  let description = [{
-    Rewrite a convolution to a matmul or brgemm operation.
-  }];
-  let options = [
-    Option<"enableBrgemm", "enable-brgemm", "bool", "false",
-           "Rewrite convolution to BRGEMM if possible">
-  ];
-  let dependentDialects = ["scf::SCFDialect", "linalg::LinalgDialect"];
 }
 
 def RewriteBatchMatmulToMatmul : Pass<"rewrite-batch-matmul-to-matmul",
@@ -302,15 +329,6 @@ def FoldAddIntoDest : Pass<"fold-add-into-dest", "ModuleOp"> {
 
 def ElementWiseFusion : Pass<"element-wise-fusion", "func::FuncOp"> {
   let summary = "Run linalg element-wise fusion";
-}
-
-def ConvInitSimplify : Pass<"conv-init-simplify", "func::FuncOp"> {
-  let summary = "Simplify initialization for convolution";
-  let description = [{
-    Perform a graph-rewrite to simplify initialization for a Conv2DNhwcHwcfOp
-    operation. Specifically, instead of initializing the output of a convolution
-    with zero and then adding the bias, initialize the output with the bias.
-  }];
 }
 
 def Bufferize : Pass<"bufferize", "ModuleOp"> {
@@ -419,6 +437,18 @@ def SCFParallelLoopTiling : Pass<"scf-parallel-loop-tiling-pass"> {
   let dependentDialects = ["affine::AffineDialect", "scf::SCFDialect"];
 }
 
+def SCFForAllLoopFlattenSFC : Pass<"scf-forall-loop-flatten-sfc"> {
+  let summary = "Flatten 2D forall loops into 1D with index vectors using space-filling curve";
+  let description = [{
+    Transform innermost scf.forall operations with exactly 2 induction variables
+    into scf.forall with 1 induction variable. Creates constant dense vectors
+    containing the flattened iteration space values using a space-filling curve (SFC) pattern,
+    and uses vector.extract with dynamic position to derive the original induction variables
+    inside the loop body.
+  }];
+  let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect", "vector::VectorDialect"];
+}
+
 def GpuInlineConstants : Pass<"gpu-inline-constants", "func::FuncOp"> {
   let summary = "Inlines constants into GPU launch.";
   let description = [{
@@ -496,6 +526,9 @@ def TppRunnerWrapper : Pass<"tpp-runner-wrapper", "ModuleOp">{
     Option<"backend", "backend", "std::string",
             /*default=*/"\"cpu\"",
            "Kernel target device backend (cpu, cuda, intel).">,
+    Option<"wrapperCpuTargetFeature", "target-feature", "std::string",
+            /*default=*/"",
+           "CPU target feature (avx, avx2, avx512f, avx512vnni, avx512bf16, amx, amx_bf16, amx_tile, neon, sve).">,
     Option<"offloadToDevice", "offload-on-device", "bool",
             /*default=*/"true",
            "Offload kernel arguments to the target device.">,
@@ -508,6 +541,9 @@ def TppRunnerWrapper : Pass<"tpp-runner-wrapper", "ModuleOp">{
     Option<"printResult", "print", "bool",
             /*default=*/"false",
            "Print kernel results.">,
+    Option<"printInput", "print-input", "bool",
+            /*default=*/"false",
+           "Print kernel inputs">,
     Option<"randomSplat", "random-splat", "bool",
             /*default=*/"false",
            "Replace splat dense tensors with random values.">,
@@ -517,6 +553,9 @@ def TppRunnerWrapper : Pass<"tpp-runner-wrapper", "ModuleOp">{
     Option<"initType", "init-type", "std::string",
             /*default=*/"",
            "Initializer type (const, simple, cont, rand, normal).">,
+    Option<"identity", "identity", "int64_t",
+            /*default=*/"-1",
+           "Identity square argument (-1=none, 0=a, 1=b, ...).">,
   ];
 }
 
@@ -587,6 +626,69 @@ def GpuVectorize : Pass<"gpu-vectorize", "ModuleOp"> {
                            "math::MathDialect",
                            "arith::ArithDialect",
                            "vector::VectorDialect"];
+}
+
+def RegisterBlocking : Pass<"register-blocking", "func::FuncOp"> {
+  let summary = "Block ops for register sizes.";
+  let description = [{
+    Tile, fuse, and post-process ops to bring them to hardware-friendly
+    shapes in preparation for vectorization.
+  }];
+  let dependentDialects = ["scf::SCFDialect",
+                           "tensor::TensorDialect",
+                           "linalg::LinalgDialect",
+                           "math::MathDialect",
+                           "affine::AffineDialect",
+                           "arith::ArithDialect"];
+  let options = [
+    ListOption<"blocks", "blocks", "int64_t",
+               "Block sizes for the innermost dims: [M, N, K]">
+  ];
+}
+
+def LinalgVectorize : Pass<"linalg-vectorize"> {
+  let summary = "Vectorize linalg ops.";
+  let description = [{
+    Applies vectorization and cleanup to lower all suitable
+    linalg ops into vectors.
+  }];
+  let dependentDialects = ["vector::VectorDialect",
+                           "tensor::TensorDialect",
+                           "linalg::LinalgDialect",
+                           "math::MathDialect",
+                           "arith::ArithDialect"];
+}
+
+def VectorDropUnitDims : Pass<"vector-drop-unit-dims"> {
+  let summary = "Drop unit dims from vector ops.";
+  let dependentDialects = ["vector::VectorDialect"];
+}
+
+def ConvertVectorToX86 : Pass<"convert-vector-to-x86"> {
+  let summary = "Convert vector ops to x86 sequences.";
+  let description = [{
+    Lowers generic vector ops into specialized x86
+    sequences of operations.
+  }];
+  let dependentDialects = ["vector::VectorDialect",
+                           "x86vector::X86VectorDialect",
+                           "amx::AMXDialect",
+                           "arith::ArithDialect"];
+}
+
+def RegisterUnroll : Pass<"register-unroll"> {
+  let summary = "Unroll ops for register sizes.";
+  let description = [{
+    Unroll vector ops to bring them to hardware-compatible shapes.
+  }];
+  let dependentDialects = ["vector::VectorDialect",
+                           "arith::ArithDialect",
+                           "math::MathDialect",
+                           "affine::AffineDialect"];
+  let options = [
+    ListOption<"gemmUnroll", "gemm-unroll", "int64_t",
+               "Unroll shape sizes for the innermost dims: [M, N, K]">
+  ];
 }
 
 #endif // TPP_DIALECT_TPP_PASSES

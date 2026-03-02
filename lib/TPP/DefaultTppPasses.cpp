@@ -117,7 +117,8 @@ private:
       pm.addPass(createRewriteBatchMatmulToMatmul());
 
       // Applies a set of passes at the linalg level to fuse and pack.
-      TppMappingOptions tppMappingOptions{lowerPackUnpackWithoutTranspose};
+      TppMappingOptions tppMappingOptions{lowerPackUnpackWithoutTranspose, 
+	        disableVnniPacking};
       pm.addPass(createTppMapping(tppMappingOptions));
 
       // Generalize linalg.pack and linalg.unpack.
@@ -128,6 +129,11 @@ private:
       // bufferize. Once this is possible we can move this pass after
       // bufferization.
       pm.addNestedPass<func::FuncOp>(createDecomposeAggregatedOps());
+
+      // Flatten 2D scf.forall loops using space-filling curve before bufferization
+      if (sfcOrder) {
+        pm.addPass(createSCFForAllLoopFlattenSFC());
+      }
 
       // Bufferize: tensor->memref.
       pm.addPass(createBufferize());
@@ -151,7 +157,9 @@ private:
           pm.addPass(createVectorToXSMM());
         }
         if (vectorToKernel) {
-          pm.addPass(createVectorToKernel());
+          VectorToKernelOptions options;
+          options.vecBundleCpuTargetFeature = defBundleCpuTargetFeature;
+          pm.addPass(createVectorToKernel(options));
         }
       }
 
@@ -168,10 +176,14 @@ private:
     if (linalgToVector) {
       pm.addPass(createConvertVectorToSCFPass());
       // Low level parallelization passes.
-      pm.addPass(createLowLevelParallelization(LowLevelParallelization));
+      if(!sfcOrder) {
+        pm.addPass(createLowLevelParallelization(LowLevelParallelization));
+      }
     } else {
       // Low level parallelization passes.
-      pm.addPass(createLowLevelParallelization(LowLevelParallelization));
+      if(!sfcOrder) {
+        pm.addPass(createLowLevelParallelization(LowLevelParallelization));
+      }
       // TODO: These passes have been moved out of low level parallelization
       // pass since these apply on xsmm dialect. They'll be moved back in
       // subsequent commits.

@@ -4,20 +4,18 @@ add_mlir_library(TPPTransforms
   Bufferize.cpp
   ConstantFoldPack.cpp
   ConvertForAllToParallelOp.cpp
-  ConvInitSimplify.cpp
   DecomposeAggregatedOps.cpp
   LinalgDeGeneralize.cpp
   LowerPacksAndUnpacks.cpp
   LowerPacksAndUnpacksWithoutTranspose.cpp
   RewriteBatchMatmulToMatmul.cpp
-  RewriteConvsToMatmulOrBrgemm.cpp
-  RewriteConvToMatmulImpl.cpp
   RewriteToBatchReduceGemm.cpp
   TileConsumerAndFuseProducers.cpp
   ToBlockLayoutAndBack.cpp
   TransformUtils.cpp
   CombineXsmmPass.cpp
   SCFParallelLoopTiling.cpp
+  SCFForAllLoopFlattenSFC.cpp
   IntelAMXTileConfig.cpp
   IntelAMXTileConfigHoisting.cpp
   LinalgConvertCompareSelectToMaximumfPass.cpp
@@ -30,6 +28,15 @@ add_mlir_library(TPPTransforms
   VectorContractToOuterproduct.cpp
   HoistVectorTransfers.cpp
   VectorContractToFMA.cpp
+  VectorContractToBF16DotProduct.cpp
+  VectorContractToAMX.cpp
+  VectorContractToMicroKernels.cpp
+  RegisterBlocking.cpp
+  LinalgVectorize.cpp
+  VectorDropUnitDims.cpp
+  ConvertVectorToX86.cpp
+  RegisterUnroll.cpp
+  VectorContractToMicroKernelsAMX.cpp
 
   ADDITIONAL_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}/include/TPP

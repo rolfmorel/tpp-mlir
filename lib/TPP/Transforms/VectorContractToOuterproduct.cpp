@@ -133,8 +133,8 @@ struct VectorContractToOuterproductPattern
       return failure();
 
     // Make sure the inputs being read are whole tensor or subview.
-    if (!llvm::all_of(lhsDefiningOp.getIndices(), isZeroIndex) ||
-        !llvm::all_of(rhsDefiningOp.getIndices(), isZeroIndex)) {
+    if (!llvm::all_of(lhsDefiningOp.getIndices(), isZeroInteger) ||
+        !llvm::all_of(rhsDefiningOp.getIndices(), isZeroInteger)) {
       return failure();
     }
 
@@ -170,17 +170,17 @@ struct VectorContractToOuterproductPattern
 
     // Create constants
     Location loc = contractOp.getLoc();
-    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value cK = rewriter.create<arith::ConstantIndexOp>(loc, K);
+    Value c0 = arith::ConstantIndexOp::create(rewriter, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(rewriter, loc, 1);
+    Value cK = arith::ConstantIndexOp::create(rewriter, loc, K);
 
     auto elementType = lhsType.getElementType();
     FloatType floatType = cast<FloatType>(elementType);
-    Value f0 = rewriter.create<arith::ConstantFloatOp>(
-        loc, APFloat::getZero(floatType.getFloatSemantics()), floatType);
+    Value f0 = arith::ConstantFloatOp::create(rewriter, 
+        loc, floatType, APFloat::getZero(floatType.getFloatSemantics()));
 
     // Create the outer scf.for loop
-    auto forOp = rewriter.create<scf::ForOp>(
+    auto forOp = scf::ForOp::create(rewriter, 
         loc, c0, cK, c1, ValueRange{acc},
         [&](OpBuilder &nestedBuilder, Location nestedLoc, Value iv,
             ValueRange iterArgs) {
@@ -230,26 +230,26 @@ struct VectorContractToOuterproductPattern
                                     nestedBuilder.getContext());
           }
 
-          Value lhsTensor = lhsDefiningOp.getSource();
-          Value rhsTensor = rhsDefiningOp.getSource();
+          Value lhsTensor = lhsDefiningOp.getBase();
+          Value rhsTensor = rhsDefiningOp.getBase();
           // Read vector slices using TransferReadOp
-          auto lhsSlice = nestedBuilder.create<vector::TransferReadOp>(
+          auto lhsSlice = vector::TransferReadOp::create(nestedBuilder, 
               nestedLoc, VectorType::get({M}, lhsType.getElementType()),
               lhsTensor, lhsIndices, AffineMapAttr::get(lhsMap), f0, Value(),
               rewriter.getBoolArrayAttr({true}));
 
-          auto rhsSlice = nestedBuilder.create<vector::TransferReadOp>(
+          auto rhsSlice = vector::TransferReadOp::create(nestedBuilder, 
               nestedLoc, VectorType::get({N}, rhsType.getElementType()),
               rhsTensor, rhsIndices, rhsMap, f0, Value(),
               rewriter.getBoolArrayAttr({true}));
 
           // Perform outer product
-          auto outerProduct = nestedBuilder.create<vector::OuterProductOp>(
+          auto outerProduct = vector::OuterProductOp::create(nestedBuilder, 
               nestedLoc, accType, lhsSlice, rhsSlice, iterArgs[0],
               vector::CombiningKind::ADD);
 
           // Yield the result
-          nestedBuilder.create<scf::YieldOp>(nestedLoc,
+          scf::YieldOp::create(nestedBuilder, nestedLoc,
                                              ValueRange{outerProduct});
         });
 

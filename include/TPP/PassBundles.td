@@ -20,6 +20,9 @@ def DefaultPipeline : Pass<"default-pipeline", "ModuleOp"> {
     Option<"gpuBackend", "gpu", "std::string",
             /*default=*/"\"\"",
            "Optional target GPU backend.">,
+    Option<"pipelineCpuTargetFeature", "target-feature", "std::string",
+            /*default=*/"",
+           "Optional CPU target feature.">,
   ];
 }
 
@@ -33,6 +36,9 @@ def DefaultTppPasses : Pass<"default-tpp-passes", "ModuleOp"> {
     Option<"linalgToLoops", "linalg-to-loops",
            "bool", /*default=*/"false",
            "Skip all TPP transformations. Lower linalg directly to loops.">,
+    Option<"sfcOrder", "sfc-order",
+           "bool", /*default=*/"true",
+           "use sfc order">,
     ListOption<"parallelTaskGrid", "parallel-task-grid",
            "unsigned", "Grid-sizes for parallel tasks.">,
     Option<"linalgToVector", "linalg-to-vector",
@@ -44,9 +50,14 @@ def DefaultTppPasses : Pass<"default-tpp-passes", "ModuleOp"> {
     Option<"vectorToKernel", "vector-to-kernel",
            "bool", /*default=*/"false",
            "Lower vector patterns to micro-kernels.">,
+    Option<"defBundleCpuTargetFeature", "target-feature", "std::string", "",
+                "Target feature for a given architecture">,
     Option<"lowerPackUnpackWithoutTranspose", "lower-pack-unpack-without-transpose",
            "bool", /*default=*/"false",
            "Lower non-constant packs and unpacks reverting any dim permutations.">,
+    Option<"disableVnniPacking", "disable-vnni-packing",
+           "bool", /*default=*/"false",
+           "Disables VNNI packing for packed types.">,
     ListOption<"registerBlocking", "registerBlocking",
            "unsigned", "Register blocking tile sizes for brgemm operation.">,
 
@@ -66,7 +77,10 @@ def TppMapping : Pass<"tpp-mapping", "ModuleOp"> {
   let options= [
     Option<"lowerPackUnpackWithoutTranspose", "lower-pack-unpack-without-transpose",
            "bool", /*default=*/"false",
-           "Lower non-constant packs and unpacks reverting any dim permutations.">
+           "Lower non-constant packs and unpacks reverting any dim permutations.">,
+    Option<"disableVnniPacking", "disable-vnni-packing",
+           "bool", /*default=*/"false",
+           "Disables VNNI packing for packed types.">
   ];
 }
 
@@ -97,6 +111,10 @@ def VectorToKernel : Pass<"vector-to-kernel", "ModuleOp"> {
   let summary = "Lower Vector operations to micro-kernel special lowering.";
   let dependentDialects = ["vector::VectorDialect",
                            "scf::SCFDialect"];
+  let options= [
+    Option<"vecBundleCpuTargetFeature", "target-feature", "std::string", "",
+                "Target feature for a given architecture">
+  ];
 }
 
 def LowLevelParallelization : Pass<"low-level-parallel", "ModuleOp"> {
@@ -197,6 +215,29 @@ def GpuToCuda : Pass<"gpu-to-cuda", "ModuleOp"> {
     Option<"gpuFeatures", "features", "std::string",
             /*default=*/"\"+ptx60\"",
            "GPU target features.">,
+  ];
+}
+
+def X86Vectorizer : Pass<"x86-vectorizer", "ModuleOp"> {
+  let summary = "Vectorize ops for x86 targets.";
+  let description = [{
+    Convert ops into vectorized x86 sequences.
+  }];
+  let dependentDialects = ["scf::SCFDialect",
+                           "tensor::TensorDialect",
+                           "linalg::LinalgDialect",
+                           "math::MathDialect",
+                           "tensor::TensorDialect",
+                           "arith::ArithDialect",
+                           "x86vector::X86VectorDialect",
+                           "amx::AMXDialect",
+                           "affine::AffineDialect",
+                           "vector::VectorDialect"];
+  let options = [
+    ListOption<"blocks", "blocks", "int64_t",
+               "Register block sizes for the innermost dims: [M, N, K]">,
+    ListOption<"gemmUnroll", "gemm-unroll", "int64_t",
+               "GEMM unroll sizes for the innermost dims: [M, N, K]">
   ];
 }
 

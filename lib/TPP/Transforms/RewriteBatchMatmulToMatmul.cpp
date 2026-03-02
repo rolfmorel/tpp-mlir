@@ -50,11 +50,16 @@ struct RankReducedExtractSliceOp
     }
     auto rankReducedType = cast<RankedTensorType>(
         tensor::ExtractSliceOp::inferCanonicalRankReducedResultType(
+            reassociation->size(), sliceOp.getSourceType(), sizes));
+            
+
+    /*auto rankReducedType = cast<RankedTensorType>(
+        tensor::ExtractSliceOp::inferCanonicalRankReducedResultType(
             reassociation->size(), sliceOp.getSourceType(), offsets, sizes,
-            strides));
+            strides));*/
 
     Location loc = sliceOp.getLoc();
-    Value newSlice = rewriter.create<tensor::ExtractSliceOp>(
+    Value newSlice = tensor::ExtractSliceOp::create(rewriter, 
         loc, rankReducedType, sliceOp.getSource(), offsets, sizes, strides);
     rewriter.replaceOpWithNewOp<tensor::ExpandShapeOp>(
         sliceOp, resultType, newSlice, *reassociation);
@@ -111,7 +116,7 @@ struct RewriteBatchMatmulToMatmul
           tilingOpts);
       if (failed(tilingResult))
         return signalPassFailure();
-      rewriter.replaceOp(batchMatmulOp, tilingResult->mergeResult.replacements);
+      rewriter.replaceOp(batchMatmulOp, tilingResult->replacements);
     });
 
     // Step2:

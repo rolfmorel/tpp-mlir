@@ -176,13 +176,13 @@ struct HoistVectorTransferOp : OpRewritePattern<vector::ContractionOp> {
 
     // Code to re-create the reduction and k loop with iter args
     auto vectorReadOpValue = cloneVectorReadOp->getResult(0);
-    auto newReductionForOp = rewriter.create<scf::ForOp>(
+    auto newReductionForOp = scf::ForOp::create(rewriter, 
         reductionForOp.getLoc(), reductionForOp.getLowerBound(),
         reductionForOp.getUpperBound(), reductionForOp.getStep(),
         ValueRange{vectorReadOpValue},
         [&](OpBuilder &rewriterNewReductionForOp, Location locNewReductionForOp,
             Value ivNewReductionForOp, ValueRange iterArgsNewReductionForOp) {
-          auto newKForOp = rewriter.create<scf::ForOp>(
+          auto newKForOp = scf::ForOp::create(rewriter, 
               kForOp.getLoc(), kForOp.getLowerBound(), kForOp.getUpperBound(),
               kForOp.getStep(), iterArgsNewReductionForOp,
               [&](OpBuilder &rewriterNewKForOp, Location locNewKForOp,
@@ -195,10 +195,10 @@ struct HoistVectorTransferOp : OpRewritePattern<vector::ContractionOp> {
                 for (auto &op : kForOp.getBody()->without_terminator()) {
                   rewriterNewKForOp.clone(op, mapper);
                 }
-                rewriterNewKForOp.create<scf::YieldOp>(locNewKForOp,
+                scf::YieldOp::create(rewriterNewKForOp, locNewKForOp,
                                                        iterArgsNewKForOp);
               });
-          rewriterNewReductionForOp.create<scf::YieldOp>(
+          scf::YieldOp::create(rewriterNewReductionForOp, 
               locNewReductionForOp, newKForOp.getResult(0));
         });
 
@@ -250,7 +250,7 @@ struct HoistVectorTransfers
     RewritePatternSet patterns(&getContext());
     populateHoistVectorTransferPatterns(patterns);
     GreedyRewriteConfig config;
-    config.strictMode = GreedyRewriteStrictness::ExistingOps;
+    config.setStrictness(GreedyRewriteStrictness::ExistingOps);
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
   }
 };

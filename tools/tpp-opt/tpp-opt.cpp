@@ -10,6 +10,9 @@
 #include "mlir/Dialect/Tensor/TransformOps/TensorTransformOps.h"
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AffineExprVisitor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -30,6 +33,8 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/ADT/TypeSwitch.h"
+
 #include <iostream>
 
 #include "TPP/Dialect/Check/BufferizableOpInterfaceImpl.h"
@@ -73,7 +78,7 @@ struct TileCheck : public AffineExprVisitor<TileCheck> {
   TileCheck(ArrayRef<OpFoldResult> tileSizes) : tileSizes(tileSizes) {}
 
   void visitDimExpr(AffineDimExpr expr) {
-    isTiled |= !isZeroIndex(tileSizes[expr.getPosition()]);
+    isTiled |= !isZeroInteger(tileSizes[expr.getPosition()]);
   }
   void visitAffineBinaryOpExpr(AffineBinaryOpExpr expr) {
     visit(expr.getLHS());
@@ -141,12 +146,12 @@ Operation *materializeTiledShape(OpBuilder &builder, Location loc,
   auto *sliceOp =
       TypeSwitch<ShapedType, Operation *>(shapedType)
           .Case([&](MemRefType) {
-            return builder.create<memref::SubViewOp>(
+            return memref::SubViewOp::create(builder,
                 loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
                 sliceParams.strides);
           })
           .Case([&](RankedTensorType) {
-            return builder.create<tensor::ExtractSliceOp>(
+            return tensor::ExtractSliceOp::create(builder,
                 loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
                 sliceParams.strides);
           })
@@ -189,7 +194,7 @@ Operation *materializeTiledShape(OpBuilder &builder, Location loc,
               }
             }
             std::cerr << "\n ";
-            return builder.create<vector::ExtractStridedSliceOp>(
+            return vector::ExtractStridedSliceOp::create(builder,
                 loc, valueToTile, offsets, sizes, strides);
           })
           .Default([](ShapedType) -> Operation * {
@@ -334,7 +339,7 @@ SmallVector<OpFoldResult> computeTileOffsets(OpBuilder &b, Location loc,
   SmallVector<OpFoldResult> offsets;
   for (unsigned idx = 0, idxIvs = 0, e = tileSizes.size(); idx < e; ++idx) {
     LLVM_DEBUG(llvm::dbgs() << "makeTiledShapes: for loop#" << idx << "\n");
-    bool isTiled = !isZeroIndex(tileSizes[idx]);
+    bool isTiled = !isZeroInteger(tileSizes[idx]);
     offsets.push_back(isTiled ? ivs[idxIvs++] : b.getIndexAttr(0));
     LLVM_DEBUG(llvm::dbgs()
                << "computeTileOffsets: " << offsets.back() << "\n");
@@ -347,7 +352,7 @@ SmallVector<OpFoldResult> computeTileSizes(OpBuilder &b, Location loc,
                                            ArrayRef<OpFoldResult> sizeBounds) {
   SmallVector<OpFoldResult> sizes;
   for (unsigned idx = 0, e = tileSizes.size(); idx < e; ++idx) {
-    bool isTiled = !isZeroIndex(tileSizes[idx]);
+    bool isTiled = !isZeroInteger(tileSizes[idx]);
     // Before composing, we need to make range a closed interval.
     OpFoldResult size = isTiled ? tileSizes[idx] : sizeBounds[idx];
     AffineExpr d0 = getAffineDimExpr(0, b.getContext());
@@ -406,7 +411,7 @@ SmallVector<std::optional<SliceParameters>> computeAllSliceParameters(
     bool omitPartialTileCheck) {
   assert(ivs.size() == static_cast<size_t>(llvm::count_if(
                            llvm::make_range(tileSizes.begin(), tileSizes.end()),
-                           [](OpFoldResult v) { return !isZeroIndex(v); })) &&
+                           [](OpFoldResult v) { return !isZeroInteger(v); })) &&
          "expected as many ivs as non-zero sizes");
 
   // Construct (potentially temporary) mins and maxes on which to apply maps
@@ -525,12 +530,12 @@ struct VectorContractionOpTiling
 
     SmallVector<Range> loopRanges(iterationBounds.size());
     Location loc = op->getLoc();
-    Value zero = builder.create<arith::ConstantIndexOp>(loc, 0);
-    Value one = builder.create<arith::ConstantIndexOp>(loc, 1);
+    Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
     for (auto dim : llvm::seq<int64_t>(0, iterationBounds.size())) {
       loopRanges[dim].offset = zero; // FIXME: not always the case?
       Value bound =
-          builder.create<arith::ConstantIndexOp>(loc, iterationBounds[dim]);
+          arith::ConstantIndexOp::create(builder, loc, iterationBounds[dim]);
       loopRanges[dim].size = bound;
       loopRanges[dim].stride = one; // FIXME: not always the case?
     }

@@ -89,7 +89,7 @@ static void replaceOpWithBinary(RewriterBase &rewriter,
                         binaryInfo.ldiRhs, binaryInfo.ldo});
   auto dtype =
       xsmm::utils::getDataType(rewriter, linalgOp.getDpsInits()[0].getType());
-  Value dispatched = rewriter.create<xsmm::BinaryDispatchOp>(
+  Value dispatched = xsmm::BinaryDispatchOp::create(rewriter, 
       loc, integer64, kind, dims, flags, dtype);
   SmallVector<Value> invokeOperands;
   invokeOperands.push_back(dispatched);
@@ -466,16 +466,16 @@ static void replaceOpWithGemmLikeOp(RewriterBase &rewriter,
     reassoc.push_back(ReassociationIndices{rankA - 2, rankA - 1});
 
     inputs[0] =
-        rewriter.create<memref::CollapseShapeOp>(loc, inputs[0], reassoc);
+        memref::CollapseShapeOp::create(rewriter, loc, inputs[0], reassoc);
   }
 
   if (batch != 0) {
     DenseI64ArrayAttr dims = DenseI64ArrayAttr::get(
         rewriter.getContext(),
         ArrayRef<int64_t>{m, n, k, lda, ldb, ldc, strideA, strideB});
-    Value dispatched = rewriter.create<xsmm::BrgemmDispatchOp>(
+    Value dispatched = xsmm::BrgemmDispatchOp::create(rewriter, 
         loc, integer64, dims, flags, dtype);
-    Value batchDim = rewriter.create<arith::ConstantOp>(
+    Value batchDim = arith::ConstantOp::create(rewriter, 
         loc, integer64, rewriter.getIntegerAttr(integer64, batch));
     invokeOperands.push_back(dispatched);
     invokeOperands.append(inputs);
@@ -485,7 +485,7 @@ static void replaceOpWithGemmLikeOp(RewriterBase &rewriter,
   } else {
     DenseI64ArrayAttr dims = DenseI64ArrayAttr::get(
         rewriter.getContext(), ArrayRef<int64_t>{m, n, k, lda, ldb, ldc});
-    Value dispatched = rewriter.create<xsmm::GemmDispatchOp>(
+    Value dispatched = xsmm::GemmDispatchOp::create(rewriter, 
         loc, integer64, dims, flags, dtype);
     invokeOperands.push_back(dispatched);
     invokeOperands.append(inputs);
@@ -677,16 +677,15 @@ static void emitTransposeOnOperand(RewriterBase &rewriter,
   applyPermutationToVector<int64_t>(shape, permutation);
   Value buffer;
   if (linalgOp.hasPureTensorSemantics()) {
-    buffer = rewriter.create<tensor::EmptyOp>(loc, shape,
+    buffer = tensor::EmptyOp::create(rewriter, loc, shape,
                                               operandType.getElementType());
-    buffer = rewriter
-                 .create<linalg::TransposeOp>(loc, operand->get(), buffer,
+    buffer = linalg::TransposeOp::create(rewriter, loc, operand->get(), buffer,
                                               permutation)
                  .getResults()[0];
   } else {
-    buffer = rewriter.create<memref::AllocOp>(
+    buffer = memref::AllocOp::create(rewriter, 
         loc, MemRefType::get(shape, operandType.getElementType()));
-    rewriter.create<linalg::TransposeOp>(loc, operand->get(), buffer,
+    linalg::TransposeOp::create(rewriter, loc, operand->get(), buffer,
                                          permutation);
   }
 
@@ -714,7 +713,7 @@ static void emitTransposeOnOperand(RewriterBase &rewriter,
   });
   if (linalgOp.hasPureBufferSemantics()) {
     rewriter.setInsertionPointAfter(linalgOp);
-    rewriter.create<memref::DeallocOp>(linalgOp.getLoc(), buffer);
+    memref::DeallocOp::create(rewriter, linalgOp.getLoc(), buffer);
   }
 }
 
@@ -1175,6 +1174,28 @@ struct ConvertCopyOp : public OpRewritePattern<linalg::CopyOp> {
   }
 };
 
+struct ConvertMemRefCopyOp : public OpRewritePattern<memref::CopyOp> {
+  using OpRewritePattern<memref::CopyOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::CopyOp copyOp,
+                                PatternRewriter &rewriter) const override {
+    Value source = copyOp.getSource();
+    Value dest = copyOp.getTarget();
+    auto unaryInfo =
+        xsmm::utils::getUnaryInfo(source, dest, xsmm::UnaryFlags::NONE);
+    if (failed(unaryInfo))
+      return failure();
+    auto flags = rewriter.getArrayAttr(xsmm::UnaryFlagsAttr::get(
+        rewriter.getContext(), xsmm::UnaryFlags::NONE));
+    xsmm::UnaryKindAttr kind = xsmm::UnaryKindAttr::get(
+        rewriter.getContext(), xsmm::UnaryKind::IDENTITY);
+    SmallVector<Value> operands{source, dest};
+    xsmm::utils::replaceOpWithUnary(rewriter, copyOp, operands, *unaryInfo,
+                                    flags, kind);
+    return success();
+  }
+};
+
 } // namespace
 
 void mlir::tpp::populateLinalgToXsmmPatterns(
@@ -1212,7 +1233,7 @@ void mlir::tpp::populateLinalgToXsmmPatterns(
       patterns.add<ConvertTransposeOpToUnaryTranspose>(ctx);
       LLVM_DEBUG(llvm::dbgs() << "[LinalgToXsmm] adding transpose\n");
     } else if (pattern == "copy") {
-      patterns.add<ConvertCopyOp>(ctx);
+      patterns.add<ConvertCopyOp, ConvertMemRefCopyOp>(ctx);
       LLVM_DEBUG(llvm::dbgs() << "[LinalgToXsmm] adding copy\n");
     } else if (pattern == "unary") {
       patterns.add<ConvertGenericToUnary>(ctx);

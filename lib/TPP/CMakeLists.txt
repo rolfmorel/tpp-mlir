@@ -12,6 +12,7 @@ get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
 add_mlir_library(TPPPipeline
   DefaultPipeline.cpp
   DefaultTppPasses.cpp
+  LoadTppDialects.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/TPP
@@ -22,8 +23,8 @@ add_mlir_library(TPPPipeline
 
   LINK_LIBS PUBLIC
     MLIRIR
-    ${mlir_dialect_libs}
-    ${conversion_libs}
+    MLIRRegisterAllDialects
+    MLIRRegisterAllPasses
     TPPGPU
     TPPPassBundles
   )
